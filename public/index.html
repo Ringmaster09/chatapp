@@ -2,37 +2,976 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Chat App</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Banter</title>
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root { color-scheme: light dark; --bubble-mine: #6d28d9; --bubble-other: #0f172a; --bubble-other-bg: rgba(15,23,42,0.06); }
+        html, body { height: 100%; }
+        body { font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial, 'Apple Color Emoji', 'Segoe UI Emoji'; }
+        .glass { backdrop-filter: blur(10px); background: rgba(255,255,255,0.6); }
+        .dark .glass { background: rgba(17,25,40,0.6); }
+        .scrollbar::-webkit-scrollbar { width: 10px; }
+        .scrollbar::-webkit-scrollbar-thumb { background: rgba(100,116,139,0.5); border-radius: 9999px; }
+        .msg-enter { animation: msg-enter 160ms ease-out; }
+        @keyframes msg-enter { from { transform: translateY(4px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .logo-shine { background: conic-gradient(from 180deg at 50% 50%, #a78bfa, #c084fc, #a78bfa); animation: spin 6s linear infinite; }
+        @keyframes spin { to { transform: rotate(1turn); } }
+        /* Themes */
+        .theme-watercolor { background-image: radial-gradient(60% 40% at 10% 10%, rgba(238,242,255,0.9), rgba(255,255,255,0)), radial-gradient(70% 50% at 90% 20%, rgba(240,249,255,0.8), rgba(255,255,255,0)); background-color: #fafafc; }
+        .theme-starry { background: linear-gradient(180deg, #0b1020, #060912 70%, #04070f); position: relative; }
+        .theme-starry:before { content:""; position:fixed; inset:0; pointer-events:none; background-image: radial-gradient(2px 2px at 20% 30%, #fff, transparent), radial-gradient(1px 1px at 70% 40%, #c7d2fe, transparent), radial-gradient(2px 2px at 40% 80%, #e9d5ff, transparent); opacity:0.35; }
+        .theme-paper { background: #f7f3ee; background-image: radial-gradient(#e7e0d6 1px, transparent 1px); background-size: 16px 16px; background-position: -3px -3px; }
+        .theme-watercolor .bubble-other { background: rgba(15,23,42,0.06); }
+        .theme-starry .bubble-other { background: rgba(148,163,184,0.12); }
+        .theme-paper .bubble-other { background: rgba(15,23,42,0.07); }
+        .bubble-mine { background: var(--bubble-mine); color: #fff; }
+        .bubble-other { background: var(--bubble-other-bg); color: #0f172a; }
+        .dark .bubble-other { color: #e2e8f0; }
+    </style>
 </head>
-<body>
-    <h1>WebSocket Chat</h1>
-    <input id="room" placeholder="Room ID">
-    <input id="message" placeholder="Message">
-    <button onclick="sendMessage()">Send</button>
-    <ul id="messages"></ul>
+<body class="min-h-full theme-watercolor text-slate-900 dark:text-slate-100">
+
+    <div class="max-w-7xl mx-auto p-4 md:p-8">
+        <header class="flex items-center justify-between mb-6">
+            <div class="flex items-center gap-3">
+                <div class="relative h-10 w-10 rounded-xl shadow-lg overflow-hidden">
+                    <div class="absolute inset-0 opacity-40 logo-shine"></div>
+                    <svg viewBox="0 0 64 64" class="relative z-10 h-full w-full">
+                        <defs>
+                            <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
+                                <stop offset="0%" stop-color="#8b5cf6"/>
+                                <stop offset="100%" stop-color="#a855f7"/>
+                            </linearGradient>
+                        </defs>
+                        <rect x="0" y="0" width="64" height="64" rx="14" fill="url(#g1)"/>
+                        <path d="M18 22h20a8 8 0 0 1 0 16H31l-7 6v-6h-6V22z" fill="#fff"/>
+                        <circle cx="44" cy="26" r="3" fill="#fff"/>
+                    </svg>
+                </div>
+                <h1 class="text-2xl md:text-3xl font-extrabold tracking-tight">Banter</h1>
+                <span id="envStatus" class="ml-3 text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 hidden"></span>
+            </div>
+            <div class="flex items-center gap-2">
+                <select id="themeSelect" class="px-3 py-2 rounded-lg text-sm bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700">
+                    <option value="watercolor">Watercolor</option>
+                    <option value="starry">Starry Night</option>
+                    <option value="paper">Paper</option>
+                </select>
+                <button id="themeToggle" class="px-3 py-2 rounded-lg text-sm font-medium bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700">Toggle Theme</button>
+                <button id="logoutBtn" class="hidden px-3 py-2 rounded-lg text-sm font-semibold bg-violet-600 text-white hover:bg-violet-700">Logout</button>
+            </div>
+        </header>
+
+        <!-- Auth Panel -->
+        <section id="authPanel" class="glass rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden mb-6">
+            <div class="p-6">
+                <div class="flex mb-6 bg-slate-100 dark:bg-slate-800 rounded-xl p-1">
+                    <button id="tabLogin" class="flex-1 px-4 py-2 rounded-lg text-sm font-semibold bg-white dark:bg-slate-900 shadow">Sign In</button>
+                    <button id="tabRegister" class="flex-1 px-4 py-2 rounded-lg text-sm font-semibold">Sign Up</button>
+                </div>
+                <form id="loginForm" class="space-y-4">
+                    <div>
+                        <label class="text-sm font-medium">Email</label>
+                        <input id="loginEmail" type="email" class="mt-1 w-full px-4 py-3 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-500" placeholder="you@example.com" required>
+                    </div>
+                    <div>
+                        <label class="text-sm font-medium">Password</label>
+                        <input id="loginPassword" type="password" class="mt-1 w-full px-4 py-3 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-500" placeholder="••••••••" required>
+                    </div>
+                    <button class="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-semibold">Sign In</button>
+                </form>
+
+                <form id="registerForm" class="space-y-4 hidden">
+                    <div>
+                        <label class="text-sm font-medium">Name</label>
+                        <input id="regName" type="text" class="mt-1 w-full px-4 py-3 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-500" placeholder="Your name" required>
+                    </div>
+                    <div>
+                        <label class="text-sm font-medium">Username</label>
+                        <input id="regUsername" type="text" class="mt-1 w-full px-4 py-3 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-500" placeholder="unique username" required>
+                    </div>
+                    <div>
+                        <label class="text-sm font-medium">Email</label>
+                        <input id="regEmail" type="email" class="mt-1 w-full px-4 py-3 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-500" placeholder="you@example.com" required>
+                    </div>
+                    <div>
+                        <label class="text-sm font-medium">Password</label>
+                        <input id="regPassword" type="password" class="mt-1 w-full px-4 py-3 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-500" placeholder="••••••••" required>
+                    </div>
+                    <button class="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-semibold">Create account</button>
+                </form>
+
+                <p id="authError" class="mt-4 text-sm text-rose-600 dark:text-rose-400 hidden"></p>
+            </div>
+        </section>
+
+        <!-- Main Split: Left (Rooms+Chat) | Right (Advanced) -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Left Column: Rooms + Chat stacked, span 2 cols on large -->
+            <div class="lg:col-span-2 space-y-6">
+                <section id="roomsPanel" class="glass rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden opacity-50 pointer-events-none">
+                    <div class="p-6 space-y-4">
+                        <div class="flex items-center justify-between">
+                            <h2 class="text-lg font-bold">Rooms</h2>
+                            <button id="refreshRooms" class="px-3 py-2 rounded-lg text-sm font-medium bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700">Refresh</button>
+                        </div>
+                        <div class="flex gap-2">
+                            <input id="roomName" class="flex-1 px-4 py-3 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-500" placeholder="New room name">
+                            <input id="roomDuration" type="number" min="0" class="w-36 px-3 py-3 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-500" placeholder="Min (0 = permanent)">
+                            <button id="createRoom" class="px-4 py-3 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-semibold">Create</button>
+                        </div>
+                        <ul id="roomsList" class="divide-y divide-slate-200 dark:divide-slate-800"></ul>
+                    </div>
+                </section>
+
+                <section id="chatPanel" class="glass rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden opacity-50 pointer-events-none flex flex-col min-h-[420px]">
+                    <div class="p-6 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                        <div>
+                            <h2 id="activeRoomName" class="text-lg font-bold">Select a room</h2>
+                            <p id="activeRoomMeta" class="text-xs text-slate-500">No room joined</p>
+                            <p id="activeRoomExpiry" class="text-[11px] text-slate-500 hidden"></p>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button id="shareRoom" class="hidden px-3 py-2 rounded-lg text-sm font-medium bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700">Share link</button>
+                        </div>
+                    </div>
+                    <div id="messages" class="flex-1 p-4 space-y-2 overflow-y-auto scrollbar"></div>
+                    <form id="messageForm" class="p-3 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-2">
+                        <div class="flex gap-2">
+                            <input id="messageInput" class="flex-1 px-3 py-2.5 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-500" placeholder="Type a message..." autocomplete="off">
+                            <button class="px-4 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-semibold">Send</button>
+                        </div>
+                        <div class="flex gap-2 items-center">
+                            <input id="whisperTo" class="flex-1 px-3 py-2 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 text-xs" placeholder="Whisper to @username (optional)">
+                            <label class="text-xs flex items-center gap-1"><input id="whisperToggle" type="checkbox"> Whisper</label>
+                        </div>
+                    </form>
+                </section>
+            </div>
+
+            <!-- Right Column: Advanced Panels -->
+            <div class="lg:col-span-1 space-y-6">
+                <section id="advancedPanel" class="glass rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden">
+                    <div class="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center gap-2">
+                        <button id="tabEvents" class="px-3 py-2 rounded-lg text-sm font-semibold bg-white dark:bg-slate-900 shadow">Events</button>
+                        <button id="tabLeaderboard" class="px-3 py-2 rounded-lg text-sm font-semibold">Leaderboards & Badges</button>
+                        <button id="tabDiscover" class="px-3 py-2 rounded-lg text-sm font-semibold">Friend Discovery</button>
+                        <button id="tabGames" class="px-3 py-2 rounded-lg text-sm font-semibold">Games/Polls</button>
+                    </div>
+                    <div class="grid grid-cols-1">
+                        <div id="eventsPanel" class="p-6 space-y-4">
+                            <h3 class="font-bold text-lg">Event Scheduling</h3>
+                            <form id="eventForm" class="space-y-3">
+                                <input id="eventTitle" class="w-full px-4 py-3 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-500" placeholder="Event title (e.g., Standup)" required>
+                                <input id="eventAt" type="datetime-local" class="w-full px-4 py-3 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-500" required>
+                                <label class="flex items-center gap-2 text-sm"><input id="eventRemind" type="checkbox" class="rounded"> Remind me 5 min before</label>
+                                <button class="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-semibold">Add Event</button>
+                            </form>
+                            <ul id="eventsList" class="space-y-3"></ul>
+                        </div>
+                        <div id="leaderboardPanel" class="p-6 space-y-4 hidden">
+                            <h3 class="font-bold text-lg">Leaderboards</h3>
+                            <ul id="leaderboardList" class="space-y-2"></ul>
+                            <h4 class="font-semibold mt-4">Badges</h4>
+                            <ul id="badgesList" class="flex flex-wrap gap-2"></ul>
+                        </div>
+                        <div id="discoverPanel" class="p-6 space-y-4 hidden">
+                            <h3 class="font-bold text-lg">People you may like</h3>
+                            <ul id="discoverList" class="space-y-2"></ul>
+                        </div>
+                        <div id="gamesPanel" class="p-6 space-y-5 hidden">
+                            <h3 class="font-bold text-lg">Games & Polls</h3>
+                            <div class="space-y-3">
+                                <h4 class="font-semibold">Quick Poll</h4>
+                                <input id="pollQuestion" class="w-full px-3 py-2 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800" placeholder="Your question">
+                                <div id="pollOptions" class="space-y-2">
+                                    <input class="w-full px-3 py-2 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800" placeholder="Option 1">
+                                    <input class="w-full px-3 py-2 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800" placeholder="Option 2">
+                                </div>
+                                <div class="flex gap-2">
+                                    <button id="addPollOption" class="px-3 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-sm">Add option</button>
+                                    <button id="createPoll" class="px-3 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm">Create Poll</button>
+                                </div>
+                                <ul id="pollsList" class="space-y-3"></ul>
+                            </div>
+                            <div class="space-y-3">
+                                <h4 class="font-semibold">Tic-Tac-Toe</h4>
+                                <div class="flex gap-2">
+                                    <button id="tttStart" class="px-3 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm">Start / Reset</button>
+                                    <button id="tttJoin" class="px-3 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-sm">Join Game</button>
+                                </div>
+                                <div id="tttBoard" class="grid grid-cols-3 gap-1 w-40 select-none"></div>
+                                <div id="tttStatus" class="text-xs text-slate-500"></div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </div>
+
+        <footer class="mt-8 text-center text-xs text-slate-500">
+            Banter • Built with Express, Socket.IO, MongoDB & Tailwind.
+        </footer>
+    </div>
+
+    <!-- Invite Modal -->
+    <div id="inviteModal" class="hidden fixed inset-0 z-50 items-center justify-center">
+        <div class="absolute inset-0 bg-black/50"></div>
+        <div class="relative glass rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-[min(92vw,560px)] p-6 scale-95 opacity-0 transition duration-200" id="inviteModalCard">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-lg font-extrabold">Invite Key</h3>
+                <button id="closeInviteModal" class="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700">Close</button>
+            </div>
+            <div class="text-sm text-slate-600 dark:text-slate-300 mb-2">Share this key or link with your friend to join the room.</div>
+            <div class="mb-4">
+                <div class="text-xs text-slate-500 mb-1">Invite key</div>
+                <div class="flex items-center gap-2">
+                    <code id="inviteTokenTextModal" class="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-xs"></code>
+                    <button id="copyTokenBtnModal" class="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-xs">Copy key</button>
+                </div>
+            </div>
+            <div>
+                <div class="text-xs text-slate-500 mb-1">Invite link</div>
+                <div class="flex items-center gap-2">
+                    <input id="inviteLinkInputModal" class="flex-1 px-2 py-1 rounded bg-white/80 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 text-xs" readonly>
+                    <button id="copyLinkBtnModal" class="px-2 py-1 rounded bg-violet-600 hover:bg-violet-700 text-white text-xs">Copy link</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <script>
-        const socket = io();
+        // Use same-origin API base
+        const apiBase = '';
+        const tokenKey = 'jwtToken';
+        const userKey = 'chatUser';
+        let authToken = localStorage.getItem(tokenKey) || null;
+        let currentUser = JSON.parse(localStorage.getItem(userKey) || 'null');
+        let currentRoom = null;
+        const messagesCache = new Map(); // roomId -> messages[]
+        const urlParams = new URLSearchParams(window.location.search);
+        const inviteSlug = urlParams.get('room');
+        const inviteToken = urlParams.get('invite');
 
-        function joinRoom() {
-            const room = document.getElementById("room").value;
-            socket.emit("joinRoom", room);
+        // Ensure auto-join helper exists before boot logic uses it
+        async function tryAutoJoinBySlug() {
+            try {
+                if (inviteToken) {
+                    const data = await api(`/rooms/invite/${encodeURIComponent(inviteToken)}`);
+                    if (data?.roomId) { joinRoom({ _id: data.roomId, name: data.name, slug: data.slug }); return; }
+                }
+                if (inviteSlug) {
+                    const room = await api(`/rooms/slug/${encodeURIComponent(inviteSlug)}`);
+                    if (room && room._id) { joinRoom(room); }
+                }
+            } catch (e) { /* ignore */ }
         }
 
-        function sendMessage() {
-            const room = document.getElementById("room").value;
-            const text = document.getElementById("message").value;
-            socket.emit("chatMessage", { roomId: room, userId: "dummyUserId", text });
+        // Theme
+        const themeToggle = document.getElementById('themeToggle');
+        const themeSelect = document.getElementById('themeSelect');
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (prefersDark) document.documentElement.classList.add('dark');
+        function applyTheme(name) {
+            document.body.classList.remove('theme-watercolor','theme-starry','theme-paper');
+            document.body.classList.add(`theme-${name}`);
+            localStorage.setItem('banterTheme', name);
+        }
+        themeToggle.addEventListener('click', () => document.documentElement.classList.toggle('dark'));
+        themeSelect.addEventListener('change', (e) => applyTheme(e.target.value));
+        applyTheme(localStorage.getItem('banterTheme') || 'watercolor');
+
+        // Tabs (auth)
+        const tabLogin = document.getElementById('tabLogin');
+        const tabRegister = document.getElementById('tabRegister');
+        const loginForm = document.getElementById('loginForm');
+        const registerForm = document.getElementById('registerForm');
+        const authError = document.getElementById('authError');
+        const logoutBtn = document.getElementById('logoutBtn');
+
+        // Default to Sign Up on first visit (no token)
+        function showLogin() {
+            tabLogin.classList.add('bg-white','dark:bg-slate-900','shadow');
+            tabRegister.classList.remove('bg-white','dark:bg-slate-900','shadow');
+            loginForm.classList.remove('hidden');
+            registerForm.classList.add('hidden');
+            authError.classList.add('hidden');
+        }
+        function showRegister() {
+            tabRegister.classList.add('bg-white','dark:bg-slate-900','shadow');
+            tabLogin.classList.remove('bg-white','dark:bg-slate-900','shadow');
+            registerForm.classList.remove('hidden');
+            loginForm.classList.add('hidden');
+            authError.classList.add('hidden');
+        }
+        tabLogin.addEventListener('click', showLogin);
+        tabRegister.addEventListener('click', showRegister);
+
+        function updateAuthUI() {
+            const authed = !!authToken;
+            document.getElementById('roomsPanel').classList.toggle('opacity-50', !authed);
+            document.getElementById('roomsPanel').classList.toggle('pointer-events-none', !authed);
+            document.getElementById('chatPanel').classList.toggle('opacity-50', !authed);
+            document.getElementById('chatPanel').classList.toggle('pointer-events-none', !authed);
+            logoutBtn.classList.toggle('hidden', !authed);
+            const authPanel = document.getElementById('authPanel');
+            authPanel.classList.toggle('hidden', authed);
+            if (authed) {
+                fetchRooms();
+                const roomName = document.getElementById('roomName');
+                if (roomName) roomName.focus();
+            }
         }
 
-        socket.on("message", (msg) => {
-            const li = document.createElement("li");
-            li.textContent = msg.text;
-            document.getElementById("messages").appendChild(li);
+        logoutBtn.addEventListener('click', () => {
+            localStorage.removeItem(tokenKey);
+            localStorage.removeItem(userKey);
+            authToken = null;
+            currentUser = null;
+            currentRoom = null;
+            document.getElementById('messages').innerHTML = '';
+            updateRoomHeader();
+            updateAuthUI();
         });
 
-        document.getElementById("room").addEventListener("change", joinRoom);
+        // API helpers
+        async function api(path, opts = {}) {
+            const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
+            if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+            const res = await fetch(`${apiBase}/api${path}`, Object.assign({}, opts, { headers }));
+            if (!res.ok) {
+                const text = await res.text();
+                throw new Error(text || `HTTP ${res.status}`);
+            }
+            try { return await res.json(); } catch { return null; }
+        }
+
+        // Auth
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            authError.classList.add('hidden');
+            try {
+                const email = document.getElementById('loginEmail').value.trim();
+                const password = document.getElementById('loginPassword').value;
+                const data = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+                authToken = data.token;
+                currentUser = data.user;
+                localStorage.setItem(tokenKey, authToken);
+                localStorage.setItem(userKey, JSON.stringify(currentUser));
+                updateAuthUI();
+            } catch (err) {
+                authError.textContent = `Sign in failed: ${safeError(err)}`;
+                authError.classList.remove('hidden');
+            }
+        });
+
+        registerForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            authError.classList.add('hidden');
+            try {
+                const name = document.getElementById('regName').value.trim();
+                const username = document.getElementById('regUsername').value.trim();
+                const email = document.getElementById('regEmail').value.trim();
+                const password = document.getElementById('regPassword').value;
+                // Validate username availability before sending
+                const avail = await api(`/auth/username-available?username=${encodeURIComponent(username)}`);
+                if (!avail.available) throw new Error(JSON.stringify({ message: 'Username not available' }));
+                await api('/auth/register', { method: 'POST', body: JSON.stringify({ name, username, email, password }) });
+                const data = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+                authToken = data.token;
+                currentUser = data.user;
+                localStorage.setItem(tokenKey, authToken);
+                localStorage.setItem(userKey, JSON.stringify(currentUser));
+                showLogin();
+                updateAuthUI();
+            } catch (err) {
+                authError.textContent = `Sign up failed: ${safeError(err)}`;
+                authError.classList.remove('hidden');
+            }
+        });
+
+        function safeError(err) {
+            try { const o = JSON.parse(err.message); return o.error || o.message || err.message; } catch { return err.message; }
+        }
+
+        // Rooms
+        const roomsList = document.getElementById('roomsList');
+        const createRoomBtn = document.getElementById('createRoom');
+        const refreshRoomsBtn = document.getElementById('refreshRooms');
+        async function createRoomWithOptions() {
+            const name = document.getElementById('roomName').value.trim();
+            const duration = parseInt(document.getElementById('roomDuration').value, 10);
+            const body = isNaN(duration) || duration <= 0 ? { name } : { name, durationMinutes: duration };
+            return await api('/rooms', { method: 'POST', body: JSON.stringify(body) });
+        }
+        createRoomBtn.addEventListener('click', async () => {
+            const name = document.getElementById('roomName').value.trim();
+            if (!name) return;
+            try {
+                const room = await createRoomWithOptions();
+                document.getElementById('roomName').value = '';
+                document.getElementById('roomDuration').value = '';
+                await fetchRooms();
+                joinRoom(room);
+            } catch (e) { console.error(e); }
+        });
+        refreshRoomsBtn.addEventListener('click', fetchRooms);
+
+        async function fetchRooms() {
+            try {
+                const rooms = await api('/rooms');
+                roomsList.innerHTML = '';
+                rooms.forEach(room => {
+                    const li = document.createElement('li');
+                    li.className = 'py-3 flex items-center justify-between';
+                    li.innerHTML = `<div class="flex items-center gap-3">
+                        <div class="h-2.5 w-2.5 rounded-full bg-violet-500"></div>
+                        <div>
+                            <p class="font-semibold">${escapeHtml(room.name)}</p>
+                            <p class="text-xs text-slate-500">${room.users?.length || 0} members</p>
+                        </div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button data-id="${room._id}" data-name="${escapeHtml(room.name)}" class="join px-3 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold">Join</button>
+                    </div>`;
+                    roomsList.appendChild(li);
+                });
+                roomsList.querySelectorAll('.join').forEach(btn => btn.addEventListener('click', () => {
+                    joinRoom({ _id: btn.getAttribute('data-id'), name: btn.getAttribute('data-name') });
+                }));
+            } catch (e) {
+                console.error('Failed to fetch rooms', e);
+            }
+        }
+
+        function updateRoomHeader() {
+            const nameEl = document.getElementById('activeRoomName');
+            const metaEl = document.getElementById('activeRoomMeta');
+            const expiryEl = document.getElementById('activeRoomExpiry');
+            const shareBtn = document.getElementById('shareRoom');
+            if (!currentRoom) {
+                nameEl.textContent = 'Select a room';
+                metaEl.textContent = 'No room joined';
+                expiryEl.classList.add('hidden');
+                shareBtn.classList.add('hidden');
+                return;
+            }
+            nameEl.textContent = currentRoom.name || 'Room';
+            metaEl.textContent = `You are chatting as ${currentUser?.name || 'Unknown'}`;
+            expiryEl.classList.add('hidden'); // Hide by default
+            if (currentRoom.expiresAt) {
+                expiryEl.textContent = `Expires in ${new Date(currentRoom.expiresAt).toLocaleString()}`;
+                expiryEl.classList.remove('hidden');
+            }
+            shareBtn.classList.remove('hidden');
+        }
+
+        // Socket & messages
+        const socket = io();
+        const messagesEl = document.getElementById('messages');
+        const messageForm = document.getElementById('messageForm');
+        const messageInput = document.getElementById('messageInput');
+        const whisperToggle = document.getElementById('whisperToggle');
+        const whisperTo = document.getElementById('whisperTo');
+
+        socket.on('connect', () => {
+            console.log('socket connected', socket.id);
+        });
+        socket.on('message', (msg) => {
+            // cache and render
+            if (currentRoom && msg.room === currentRoom._id) {
+                cacheMessage(currentRoom._id, msg);
+                appendMessage(msg);
+                recomputeInsights();
+            }
+        });
+
+        function moodOf(text) {
+            const t = (text||'').toLowerCase();
+            if (/(sad|unhappy|blue|depressed|cry|tears|broken)/.test(t)) return 'sad';
+            if (/(angry|mad|furious|rage|hate|grr|wtf)/.test(t)) return 'angry';
+            if (/(happy|joy|great|awesome|yay|love|😊|😁|🎉)/.test(t)) return 'happy';
+            return 'neutral';
+        }
+
+        function appendMessage(msg) {
+            const isMine = currentUser && (msg.sender?._id === currentUser.id || msg.sender === currentUser.id);
+            const wrapper = document.createElement('div');
+            wrapper.className = `msg-enter flex ${isMine ? 'justify-end' : 'justify-start'}`;
+            const mood = moodOf(msg.text);
+            // Theme-aware bubbles
+            let bubbleClass = isMine ? 'bubble-mine' : 'bubble-other';
+            if (!isMine) {
+                if (mood === 'sad') bubbleClass += ' backdrop-blur-[1px]';
+                if (mood === 'angry') bubbleClass += ' ring-1 ring-rose-200/60';
+                if (mood === 'happy') bubbleClass += ' ring-1 ring-emerald-200/60';
+            }
+            const bubble = document.createElement('div');
+            bubble.className = `${bubbleClass} max-w-[60%] px-3 py-1.5 rounded-2xl shadow relative`;
+            const name = document.createElement('div');
+            name.className = `text-[11px] mb-0.5 ${isMine ? 'text-violet-100' : 'text-slate-500'}`;
+            name.textContent = msg.sender?.username ? `@${msg.sender.username}` : (isMine ? 'You' : (msg.sender?.name || 'User'));
+            const text = document.createElement('div');
+            text.className = 'text-[13px]';
+            text.textContent = msg.text;
+            // Whisper visual treatment
+            if (msg.whisperTo && msg.whisperTo !== currentUser?.id && !isMine) {
+                bubble.classList.add('opacity-40');
+                bubble.title = 'Whisper to someone else';
+            }
+            bubble.appendChild(name);
+            bubble.appendChild(text);
+            wrapper.appendChild(bubble);
+            messagesEl.appendChild(wrapper);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+
+        messageForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            if (!currentRoom || !currentUser) return;
+            const text = messageInput.value.trim();
+            if (!text) return;
+            const payload = { roomId: currentRoom._id, userId: currentUser.id, text };
+            if (whisperToggle.checked && whisperTo.value.trim()) {
+                payload.whisperToUsername = whisperTo.value.trim().replace(/^@/, '');
+            }
+            socket.emit('chatMessage', payload);
+            messageInput.value = '';
+        });
+
+        async function joinRoom(room) {
+            currentRoom = room;
+            messagesEl.innerHTML = '';
+            socket.emit('joinRoom', room._id);
+            updateRoomHeader();
+            try {
+                const msgs = await api(`/messages/${room._id}`);
+                messagesCache.set(room._id, msgs.slice(-300));
+                msgs.forEach(m => appendMessage(m));
+                document.getElementById('chatPanel').classList.remove('opacity-50','pointer-events-none');
+                recomputeInsights();
+                // Update URL with slug if present
+                if (room.slug) {
+                    const u = new URL(window.location.href);
+                    u.searchParams.set('room', room.slug);
+                    history.replaceState(null, '', u.toString());
+                }
+                if (expiryTimer) clearInterval(expiryTimer);
+                updateExpiryCountdown();
+                expiryTimer = setInterval(updateExpiryCountdown, 1000);
+            } catch (e) { console.error('Failed to load messages', e); }
+        }
+
+        function cacheMessage(roomId, msg) {
+            const arr = messagesCache.get(roomId) || [];
+            arr.push(msg);
+            if (arr.length > 300) arr.shift();
+            messagesCache.set(roomId, arr);
+        }
+
+        // Advanced Tabs
+        const tabEvents = document.getElementById('tabEvents');
+        const tabLeaderboard = document.getElementById('tabLeaderboard');
+        const tabDiscover = document.getElementById('tabDiscover');
+        const tabGames = document.getElementById('tabGames');
+        const eventsPanel = document.getElementById('eventsPanel');
+        const leaderboardPanel = document.getElementById('leaderboardPanel');
+        const discoverPanel = document.getElementById('discoverPanel');
+        const gamesPanel = document.getElementById('gamesPanel');
+        // Add a search trigger button beside input in Discover panel
+        const discoverSearchBtn = document.createElement('button');
+        discoverSearchBtn.textContent = 'Search';
+        discoverSearchBtn.className = 'mb-3 ml-2 px-3 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm';
+        discoverPanel.insertBefore(discoverSearchBtn, discoverPanel.children[1]);
+        discoverSearchBtn.addEventListener('click', () => fetchDiscoverFromApi());
+
+        // Advanced tab switching
+        tabEvents.addEventListener('click', () => switchAdvanced('events'));
+        tabLeaderboard.addEventListener('click', () => switchAdvanced('leaderboard'));
+        tabDiscover.addEventListener('click', () => switchAdvanced('discover'));
+        tabGames.addEventListener('click', () => switchAdvanced('games'));
+
+        function switchAdvanced(which) {
+            [tabEvents, tabLeaderboard, tabDiscover, tabGames].forEach(el => el.classList.remove('bg-white','dark:bg-slate-900','shadow'));
+            [eventsPanel, leaderboardPanel, discoverPanel, gamesPanel].forEach(el => el.classList.add('hidden'));
+            if (which === 'events') { tabEvents.classList.add('bg-white','dark:bg-slate-900','shadow'); eventsPanel.classList.remove('hidden'); }
+            if (which === 'leaderboard') { tabLeaderboard.classList.add('bg-white','dark:bg-slate-900','shadow'); leaderboardPanel.classList.remove('hidden'); }
+            if (which === 'discover') { tabDiscover.classList.add('bg-white','dark:bg-slate-900','shadow'); discoverPanel.classList.remove('hidden'); }
+            if (which === 'games') { tabGames.classList.add('bg-white','dark:bg-slate-900','shadow'); gamesPanel.classList.remove('hidden'); }
+        }
+
+        // Events scheduling (client-side)
+        const eventForm = document.getElementById('eventForm');
+        const eventsList = document.getElementById('eventsList');
+        let events = JSON.parse(localStorage.getItem('banterEvents') || '[]');
+        const timers = new Map();
+
+        function renderEvents() {
+            eventsList.innerHTML = '';
+            events.sort((a,b) => new Date(a.at) - new Date(b.at));
+            events.forEach((ev, idx) => {
+                const li = document.createElement('li');
+                li.className = 'p-3 rounded-xl bg-white/70 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3';
+                const left = document.createElement('div');
+                const title = document.createElement('div'); title.className = 'font-semibold'; title.textContent = ev.title;
+                const meta = document.createElement('div'); meta.className = 'text-xs text-slate-500'; meta.textContent = new Date(ev.at).toLocaleString();
+                const countdown = document.createElement('div'); countdown.className = 'text-xs font-medium text-violet-600'; countdown.id = `cd-${idx}`;
+                left.appendChild(title); left.appendChild(meta); left.appendChild(countdown);
+                const btn = document.createElement('button'); btn.className = 'px-3 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs'; btn.textContent = 'Remove';
+                btn.addEventListener('click', () => removeEvent(idx));
+                li.appendChild(left); li.appendChild(btn);
+                eventsList.appendChild(li);
+                ensureCountdown(idx, ev);
+            });
+        }
+
+        function ensureCountdown(idx, ev) {
+            if (timers.has(idx)) { clearInterval(timers.get(idx)); timers.delete(idx); }
+            function update() {
+                const diff = new Date(ev.at) - new Date();
+                const el = document.getElementById(`cd-${idx}`);
+                if (!el) return;
+                if (diff <= 0) { el.textContent = 'Starting now'; return; }
+                const m = Math.floor(diff/60000), s = Math.floor((diff%60000)/1000), h = Math.floor(m/60), mm = m%60;
+                el.textContent = `Starts in ${h}h ${mm}m ${s}s`;
+            }
+            update();
+            const int = setInterval(update, 1000);
+            timers.set(idx, int);
+            if (ev.remind) scheduleReminder(ev);
+        }
+
+        function scheduleReminder(ev) {
+            const fiveMin = 5*60*1000;
+            const delay = new Date(ev.at) - new Date() - fiveMin;
+            if (delay <= 0) return;
+            setTimeout(() => {
+                alert(`Reminder: ${ev.title} in 5 minutes`);
+            }, delay);
+        }
+
+        function removeEvent(idx) {
+            events.splice(idx,1);
+            localStorage.setItem('banterEvents', JSON.stringify(events));
+            renderEvents();
+        }
+
+        eventForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const title = document.getElementById('eventTitle').value.trim();
+            const at = document.getElementById('eventAt').value;
+            const remind = document.getElementById('eventRemind').checked;
+            if (!title || !at) return;
+            events.push({ title, at, remind });
+            localStorage.setItem('banterEvents', JSON.stringify(events));
+            e.target.reset();
+            renderEvents();
+        });
+
+        // Leaderboard & Badges, Friend Discovery
+        const leaderboardList = document.getElementById('leaderboardList');
+        const badgesList = document.getElementById('badgesList');
+        const discoverList = document.getElementById('discoverList');
+        const discoverSearchInput = document.createElement('input');
+        discoverSearchInput.id = 'discoverSearch';
+        discoverSearchInput.placeholder = 'Search users (@username or name)';
+        discoverSearchInput.className = 'mb-3 w-full px-4 py-2 rounded-lg bg-white/80 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-500';
+        document.getElementById('discoverPanel').prepend(discoverSearchInput);
+        let discoverData = [];
+
+        // Badge rules and toast
+        const badgeRules = [
+            { id: 'msgs-10', label: '10 Messages', test: (s) => s.messages >= 10, progress: (s) => `${Math.min(s.messages,10)}/10` },
+            { id: 'msgs-25', label: '25 Messages', test: (s) => s.messages >= 25, progress: (s) => `${Math.min(s.messages,25)}/25` },
+            { id: 'msgs-50', label: '50 Messages', test: (s) => s.messages >= 50, progress: (s) => `${Math.min(s.messages,50)}/50` },
+            { id: 'helpful-3', label: 'Most Helpful (3+ mentions)', test: (s) => s.helpful >= 3, progress: (s) => `${Math.min(s.helpful,3)}/3` },
+            { id: 'funny-3', label: 'Funniest (3+ laughs)', test: (s) => s.funny >= 3, progress: (s) => `${Math.min(s.funny,3)}/3` }
+        ];
+        function showToast(text) {
+            const wrap = document.createElement('div');
+            wrap.className = 'fixed bottom-4 right-4 z-50 px-4 py-3 rounded-xl bg-violet-600 text-white shadow-lg';
+            wrap.textContent = text;
+            document.body.appendChild(wrap);
+            setTimeout(() => { wrap.style.transition = 'opacity 300ms'; wrap.style.opacity = '0'; setTimeout(() => wrap.remove(), 300); }, 2000);
+        }
+
+        function recomputeInsights() {
+            const msgs = currentRoom ? (messagesCache.get(currentRoom._id) || []) : [];
+            // Leaderboard counts
+            const counts = new Map();
+            msgs.forEach(m => {
+                const id = m.sender?._id || m.sender || 'unknown';
+                const name = m.sender?.name || 'User';
+                const o = counts.get(id) || { id, name, messages: 0, helpful: 0, funny: 0 };
+                o.messages += 1;
+                const t = (m.text || '').toLowerCase();
+                if (/(thanks|thank you|help|appreciate)/.test(t)) o.helpful += 1;
+                if (/(lol|haha|lmao|😂|😆)/.test(t)) o.funny += 1;
+                counts.set(id, o);
+            });
+            const ranked = [...counts.values()].sort((a,b) => b.messages - a.messages).slice(0, 10);
+            leaderboardList.innerHTML = '';
+            if (!currentRoom) {
+                const li = document.createElement('li');
+                li.className = 'p-2 text-xs text-slate-500';
+                li.textContent = 'Join a room to see the live leaderboard.';
+                leaderboardList.appendChild(li);
+            }
+            if (ranked.length === 0 && currentRoom) {
+                const li = document.createElement('li');
+                li.className = 'p-2 text-xs text-slate-500';
+                li.textContent = 'No messages yet. Say hi to start the leaderboard!';
+                leaderboardList.appendChild(li);
+            }
+            ranked.forEach((u, i) => {
+                const li = document.createElement('li');
+                li.className = 'flex items-center justify-between p-2 rounded-lg bg-white/70 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800';
+                li.innerHTML = `<div class="flex items-center gap-2"><span class="text-xs px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">#${i+1}</span><span class="font-semibold">${escapeHtml(u.name)}</span></div><div class="text-xs text-slate-500">${u.messages} msgs</div>`;
+                leaderboardList.appendChild(li);
+            });
+            // Badges for current user with tiers and progress
+            badgesList.innerHTML = '';
+            const stats = (currentUser && counts.get(currentUser.id)) ? counts.get(currentUser.id) : { messages:0, helpful:0, funny:0 };
+            const earnedKey = `badges_${currentUser?.id || 'anon'}`;
+            const earnedBefore = new Set(JSON.parse(localStorage.getItem(earnedKey) || '[]'));
+            const earnedNow = new Set(earnedBefore);
+            badgeRules.forEach(rule => {
+                const got = rule.test(stats);
+                const li = document.createElement('li');
+                li.className = `px-3 py-1.5 rounded-full border text-xs font-semibold ${got ? 'bg-violet-600/10 text-violet-700 dark:text-violet-300 border-violet-300/50' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-300/40'}`;
+                li.textContent = got ? rule.label : `${rule.label} • ${rule.progress(stats)}`;
+                badgesList.appendChild(li);
+                if (got && !earnedBefore.has(rule.id)) {
+                    earnedNow.add(rule.id);
+                    showToast(`Badge unlocked: ${rule.label}!`);
+                }
+            });
+            localStorage.setItem(earnedKey, JSON.stringify([...earnedNow]));
+            // Friend Discovery remains
+            discoverList.innerHTML = '';
+            ranked.filter(u => !currentUser || u.id !== currentUser.id).slice(0,5).forEach(u => {
+                const li = document.createElement('li');
+                li.className = 'flex items-center justify-between p-2 rounded-lg bg-white/70 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800';
+                li.innerHTML = `<div class="flex items-center gap-3">
+                    <div class="h-8 w-8 rounded-full bg-gradient-to-tr from-violet-500 to-fuchsia-500"></div>
+                    <div>
+                        <div class="font-semibold">${escapeHtml(u.name)}</div>
+                        <div class="text-xs text-slate-500">Active in this room</div>
+                    </div>
+                </div>
+                <button class="px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-xs">Say hi</button>`;
+                discoverList.appendChild(li);
+            });
+        }
+
+        async function fetchDiscoverFromApi() {
+            const q = (document.getElementById('discoverSearch')?.value || '').trim();
+            if (!q) { renderDiscover(); return; }
+            try {
+                const users = await api(`/auth/search?q=${encodeURIComponent(q.replace(/^@/, ''))}`);
+                // Map to display shape
+                discoverData = users.filter(u => !currentUser || u.id !== currentUser.id).slice(0,20);
+                renderDiscover(true);
+            } catch (e) { /* ignore */ }
+        }
+
+        function renderDiscover(fromApi = false) {
+            const q = (document.getElementById('discoverSearch')?.value || '').toLowerCase();
+            discoverList.innerHTML = '';
+            const base = fromApi ? discoverData : discoverData.filter(u => !q || u.name.toLowerCase().includes(q) || (u.username||'').includes(q.replace(/^@/, '')));
+            const filtered = base.slice(0,10);
+            if (filtered.length === 0) {
+                const li = document.createElement('li');
+                li.className = 'p-2 text-xs text-slate-500';
+                li.textContent = 'No matching users found.';
+                discoverList.appendChild(li);
+            }
+            filtered.forEach(u => {
+                const li = document.createElement('li');
+                li.className = 'flex items-center justify-between p-2 rounded-lg bg-white/70 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800';
+                li.innerHTML = `<div class="flex items-center gap-3">
+                    <div class="h-8 w-8 rounded-full bg-gradient-to-tr from-violet-500 to-fuchsia-500"></div>
+                    <div>
+                        <div class="font-semibold">${escapeHtml(u.name)}</div>
+                        <div class="text-xs text-slate-500">@${escapeHtml(u.username || '')}</div>
+                    </div>
+                </div>
+                <button class="px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-xs">Say hi</button>`;
+                discoverList.appendChild(li);
+            });
+        }
+        document.addEventListener('input', (e) => { if (e.target && e.target.id === 'discoverSearch') fetchDiscoverFromApi(); });
+
+        function badge(label) {
+            const el = document.createElement('li');
+            el.className = 'px-3 py-1.5 rounded-full bg-violet-600/10 text-violet-700 dark:text-violet-300 border border-violet-300/50 text-xs font-semibold';
+            el.textContent = label;
+            return el;
+        }
+
+        // Games & Polls wiring
+        const pollsList = document.getElementById('pollsList');
+        const pollQuestion = document.getElementById('pollQuestion');
+        const pollOptions = document.getElementById('pollOptions');
+        document.getElementById('addPollOption').addEventListener('click', (e) => {
+            e.preventDefault();
+            const count = pollOptions.querySelectorAll('input').length;
+            if (count >= 6) return;
+            const input = document.createElement('input');
+            input.className = 'w-full px-3 py-2 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800';
+            input.placeholder = `Option ${count+1}`;
+            pollOptions.appendChild(input);
+        });
+        document.getElementById('createPoll').addEventListener('click', (e) => {
+            e.preventDefault();
+            if (!currentRoom) return;
+            const q = pollQuestion.value.trim();
+            const opts = [...pollOptions.querySelectorAll('input')].map(i => i.value.trim()).filter(Boolean);
+            if (!q || opts.length < 2) return;
+            socket.emit('poll:create', { roomId: currentRoom._id, question: q, options: opts });
+            pollQuestion.value=''; pollOptions.innerHTML='';
+            ['Option 1','Option 2'].forEach(ph => { const el=document.createElement('input'); el.className='w-full px-3 py-2 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800'; el.placeholder=ph; pollOptions.appendChild(el); });
+        });
+        socket.on('poll:created', (poll) => {
+            renderPoll(poll);
+        });
+        socket.on('poll:updated', (poll) => {
+            const existing = document.getElementById(`poll-${poll.id}`);
+            if (existing) existing.remove();
+            renderPoll(poll);
+        });
+        function renderPoll(poll) {
+            if (!currentRoom) return;
+            const li = document.createElement('li');
+            li.id = `poll-${poll.id}`;
+            li.className = 'p-3 rounded-xl bg-white/70 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800';
+            const total = poll.options.reduce((a,b)=>a+b.votes,0) || 0;
+            li.innerHTML = `<div class=\"font-semibold mb-2\">${escapeHtml(poll.question)}</div>`;
+            poll.options.forEach((o, idx) => {
+                const pct = total ? Math.round((o.votes/total)*100) : 0;
+                const row = document.createElement('div');
+                row.className = 'mb-1';
+                row.innerHTML = `<div class=\"flex items-center justify-between text-xs mb-1\"><span>${escapeHtml(o.label)}</span><span>${o.votes} (${pct}%)</span></div><div class=\"h-2 rounded bg-slate-200 dark:bg-slate-800\"><div class=\"h-2 rounded bg-violet-600\" style=\"width:${pct}%;\"></div></div>`;
+                row.addEventListener('click', ()=> socket.emit('poll:vote', { roomId: currentRoom._id, pollId: poll.id, optionIndex: idx }));
+                li.appendChild(row);
+            });
+            pollsList.prepend(li);
+        }
+
+        // Tic-Tac-Toe
+        const tttBoard = document.getElementById('tttBoard');
+        const tttStatus = document.getElementById('tttStatus');
+        function drawBoard(board) {
+            tttBoard.innerHTML='';
+            board.forEach((cell, i) => {
+                const b = document.createElement('button');
+                b.className = 'h-10 w-10 rounded bg-white/80 dark:bg-slate-900/70 border border-slate-300 dark:border-slate-700 text-lg font-bold';
+                b.textContent = cell || '';
+                b.addEventListener('click', () => socket.emit('ttt:move', { roomId: currentRoom._id, userId: currentUser?.id, index: i }));
+                tttBoard.appendChild(b);
+            });
+        }
+        document.getElementById('tttStart').addEventListener('click', ()=> { if (currentRoom) socket.emit('ttt:start', { roomId: currentRoom._id }); });
+        document.getElementById('tttJoin').addEventListener('click', ()=> { if (currentRoom && currentUser) socket.emit('ttt:join', { roomId: currentRoom._id, userId: currentUser.id }); });
+        socket.on('ttt:state', (g) => {
+            drawBoard(g.board);
+            tttStatus.textContent = `Turn: ${g.turn}`;
+        });
+        socket.on('ttt:over', ({ winner }) => {
+            tttStatus.textContent = winner === 'draw' ? 'Draw!' : `Winner: ${winner}`;
+        });
+
+        // Helpers
+        function escapeHtml(str) { return str?.replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\'':'&#39;','\"':'&quot;'}[c])) || ''; }
+
+        // Env status hint (surface typical backend misconfig quickly)
+        (function checkEnv() {
+            const el = document.getElementById('envStatus');
+            fetch(`/api/rooms`, { method: 'GET' }).then(r => {
+                if (!r.ok) throw new Error();
+            }).catch(() => {
+                el.textContent = 'Backend not reachable. Start server and set .env (MONGO_URI, JWT_SECRET).';
+                el.classList.remove('hidden');
+            });
+        })();
+
+        // Username availability UI feedback
+        const regUsername = document.getElementById('regUsername');
+        const nameHint = document.createElement('div');
+        nameHint.className = 'text-xs mt-1';
+        regUsername.parentElement.appendChild(nameHint);
+        async function checkUsernameAvailability(v) {
+            nameHint.textContent = '';
+            if (!v) return;
+            try {
+                const r = await api(`/auth/username-available?username=${encodeURIComponent(v)}`);
+                if (r.available) { nameHint.textContent = 'Username is available'; nameHint.className = 'text-xs mt-1 text-emerald-600'; }
+                else { nameHint.textContent = 'Username is taken'; nameHint.className = 'text-xs mt-1 text-rose-600'; }
+            } catch { /* ignore */ }
+        }
+        let uTimer;
+        regUsername.addEventListener('input', (e) => { clearTimeout(uTimer); uTimer = setTimeout(() => checkUsernameAvailability(e.target.value.trim()), 300); });
+        regUsername.addEventListener('blur', (e) => checkUsernameAvailability(e.target.value.trim()));
+
+        // Boot
+        if (authToken && currentUser) {
+            updateAuthUI();
+            tryAutoJoinBySlug();
+        } else {
+            showRegister();
+            updateAuthUI();
+        }
+        // Initialize panels
+        switchAdvanced('events');
+        renderEvents();
+
+        document.getElementById('shareRoom').addEventListener('click', async () => {
+            if (!currentRoom) return;
+            try {
+                // Create invite token for this room
+                const invite = await api(`/rooms/${currentRoom._id}/invite`, { method: 'POST' });
+                const base = window.location.origin + window.location.pathname;
+                const link = `${base}?invite=${encodeURIComponent(invite.token)}`;
+                // Show inline banner
+                const banner = document.getElementById('inviteDisplay');
+                const tokenEl = document.getElementById('inviteTokenText');
+                const linkEl = document.getElementById('inviteLinkInput');
+                tokenEl.textContent = invite.token;
+                linkEl.value = link;
+                banner.classList.remove('hidden');
+                // Show modal that "bombs" up
+                const modal = document.getElementById('inviteModal');
+                const card = document.getElementById('inviteModalCard');
+                document.getElementById('inviteTokenTextModal').textContent = invite.token;
+                document.getElementById('inviteLinkInputModal').value = link;
+                modal.classList.remove('hidden');
+                // animate
+                requestAnimationFrame(() => { card.classList.remove('opacity-0','scale-95'); card.classList.add('opacity-100','scale-100'); });
+                // Copy to clipboard for convenience
+                try { await navigator.clipboard.writeText(link); showToast('Invite link copied to clipboard'); } catch {}
+            } catch (e) { console.error(e); }
+        });
+        document.addEventListener('click', async (e) => {
+            if (e.target && (e.target.id === 'copyTokenBtn' || e.target.id === 'copyTokenBtnModal')) {
+                const t = (e.target.id === 'copyTokenBtnModal' ? document.getElementById('inviteTokenTextModal').textContent : document.getElementById('inviteTokenText').textContent);
+                try { await navigator.clipboard.writeText(t); showToast('Invite key copied'); } catch {}
+            }
+            if (e.target && (e.target.id === 'copyLinkBtn' || e.target.id === 'copyLinkBtnModal')) {
+                const v = (e.target.id === 'copyLinkBtnModal' ? document.getElementById('inviteLinkInputModal').value : document.getElementById('inviteLinkInput').value);
+                try { await navigator.clipboard.writeText(v); showToast('Invite link copied'); } catch {}
+            }
+            if (e.target && (e.target.id === 'closeInviteModal' || e.target.id === 'inviteModal')) {
+                const modal = document.getElementById('inviteModal');
+                const card = document.getElementById('inviteModalCard');
+                card.classList.add('opacity-0','scale-95');
+                setTimeout(() => modal.classList.add('hidden'), 180);
+            }
+        });
     </script>
 </body>
 </html>

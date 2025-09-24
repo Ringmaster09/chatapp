@@ -10,8 +10,8 @@ exports.addMessage = async ({ room, sender, text }) => {
     try {
         const message = new Message({ room, sender, text });
         await message.save();
-        // Populate sender's name for returning
-        return await message.populate("sender", "name");
+        // Populate sender's name and username for returning
+        return await message.populate("sender", "name username");
     } catch (err) {
         console.error("Error adding message:", err);
         throw err;
@@ -26,7 +26,7 @@ exports.addMessage = async ({ room, sender, text }) => {
 exports.getMessagesByRoom = async (roomId) => {
     try {
         const messages = await Message.find({ room: roomId })
-            .populate("sender", "name")
+            .populate("sender", "name username")
             .sort({ createdAt: 1 }); // sort messages by time ascending
         return messages;
     } catch (err) {

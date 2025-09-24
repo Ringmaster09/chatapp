@@ -22,6 +22,8 @@ const io = require("socket.io")(server, {
 // Middleware
 app.use(cors());
 app.use(express.json());
+// Prevent 404 spam for favicon when none is provided
+app.get('/favicon.ico', (req, res) => res.status(204).end());
 app.use(express.static(path.join(__dirname, "public")));
 
 // Routes
@@ -32,12 +34,32 @@ app.use("/api/messages", messageRoutes);
 // WebSocket
 socketHandler(io);
 
+async function fixIndexes() {
+    try {
+        const Room = require("./src/models/Room");
+        // Drop legacy non-sparse unique index if it exists
+        const indexes = await Room.collection.indexes();
+        const legacy = indexes.find(i => i.name === "invites.token_1");
+        if (legacy && !(legacy.sparse === true)) {
+            try { await Room.collection.dropIndex("invites.token_1"); } catch (_) {}
+        }
+        // Ensure current indexes
+        await Room.syncIndexes();
+        console.log("Room indexes synced");
+    } catch (e) {
+        console.warn("Index sync warning:", e.message);
+    }
+}
+
 // MongoDB Connection
 mongoose.connect(process.env.MONGO_URI, {
     useNewUrlParser: true,
     useUnifiedTopology: true
 })
-.then(() => console.log("MongoDB Connected"))
+.then(async () => {
+    console.log("MongoDB Connected");
+    await fixIndexes();
+})
 .catch(err => console.log("MongoDB Error:", err));
 
 // Start Server
